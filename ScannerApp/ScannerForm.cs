@@ -31,10 +31,10 @@ namespace ScannerApp
         private readonly string _saveDir = @"C:\Scans";
 
         //http://192.168.1.15:5000/ssn/extract
-        private readonly string _ocrIDEndpoint = "http://41.196.0.189:5000/ssn/extract";
-        private readonly string _ocrPassportEndpoint = "http://41.196.0.189:5000/passport/extract";
-        private readonly string _ocrDrivingLicenseEndpoint = "http://localhost:5000/license/extract";
-        private readonly string _backendApi = "https://aio-security-api.digitalhub.com.eg/api/admin/TempPerson";
+        private readonly string _ocrIDEndpoint = "http://192.168.15.108:5000/ssn/extract";
+        private readonly string _ocrPassportEndpoint = "http://192.168.15.108:5000/passport/extract";
+        private readonly string _ocrDrivingLicenseEndpoint = "http://192.168.15.108:5000/license/extract";
+        private readonly string _backendApi = "http://192.168.15.108:444/api/admin/TempPerson";
         private int _imageCount = 0;
         public ScannerForm()
         {
@@ -50,7 +50,11 @@ namespace ScannerApp
             {
                 var scanner = LoadScanners();
 
-                if (!Directory.Exists(_saveDir)) Directory.CreateDirectory(_saveDir);
+                if (!Directory.Exists(_saveDir))
+                {
+                    Directory.CreateDirectory(_saveDir);
+                }
+
 
                 string sessionId = Guid.NewGuid().ToString();
                 string frontPath = "", backPath = "", passportPath = "", drivingLicensePath = "";
@@ -65,8 +69,8 @@ namespace ScannerApp
                 {
                     SavePath = _saveDir,
                     UseDuplex = useDuplex,
-                    ColorMode = ScannerApp.Models.ColorMode.Grayscale,
-                    Resolution = 300,
+                    ColorMode = ScannerApp.Models.ColorMode.Color,
+                    Resolution = 100, //Increasing Resolution will increase Image Size 
                     Format = ImageFormat.Jpeg
                 };
 
@@ -136,11 +140,11 @@ namespace ScannerApp
 
                 var endpoint = type switch
                 {
-                    1 => _ocrIDEndpoint,
-                    2 => _ocrPassportEndpoint,
+                    1 => _ocrIDEndpoint,//Natgional ID Endpoint
+                    2 => _ocrPassportEndpoint,//Passport Endpoint
                     3 => _ocrIDEndpoint,// We Add Type 3 Just For Test
                     4 => _ocrDrivingLicenseEndpoint,//Driving License Endpoint
-                    _ => _ocrPassportEndpoint
+                    _ => _ocrPassportEndpoint//Default Passport Endpoint
 
                 };
 
@@ -213,12 +217,20 @@ namespace ScannerApp
         }
         private void InitializeComponent()
         {
-            this.Size = new Size(600, 500);
-            this.Text = "Scanner Manager";
-            this.components = new System.ComponentModel.Container();
-            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(0, 0);
-            this.Text = "ID Scanner";
+            try
+            {
+                this.Size = new Size(600, 500);
+                this.Text = "Scanner Manager";
+                this.components = new System.ComponentModel.Container();
+                this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+                this.ClientSize = new System.Drawing.Size(0, 0);
+                this.Text = "ID Scanner";
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Application started {Environment.NewLine}");
+            }
+            catch (Exception ex)
+            {
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed to start application: {ex.Message}{Environment.NewLine}");
+            }
 
             // Scanner selection
             //var lblScanner = new Label { Text = "Scanner:", Location = new Point(10, 15), Size = new Size(80, 20) };
@@ -246,15 +258,17 @@ namespace ScannerApp
         private ScannerInfo? LoadScanners()
         {
             var scanners = scannerManager.GetAvailableScanners();
+            if (scanners.Count > 0)
+            {
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed:scanners.Count = 0 {Environment.NewLine}");
+
+            }
             return scanners.FirstOrDefault();
             //cmbScanners.DataSource = scanners;
             //cmbScanners.DisplayMember = "Name";
             //cmbScanners.ValueMember = "Id";
             ////// Set the selected scanner to be the first item
-            //if (scanners.Count > 0)
-            //{
-            //    cmbScanners.SelectedIndex = 0;
-            //}
+
         }
         private void BtnBrowse_Click(object sender, EventArgs e)
         {
@@ -412,6 +426,7 @@ namespace ScannerApp
 
     public class ScannerManager
     {
+        private readonly string _saveDir = @"C:\Scans";
         private readonly WiaManager wiaManager;
         private readonly TwainManager twainManager;
 
@@ -432,6 +447,8 @@ namespace ScannerApp
             }
             catch (Exception ex)
             {
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed to load WIA Scanners: {ex.Message}{Environment.NewLine}");
+
                 System.Diagnostics.Debug.WriteLine($"WIA scanner detection failed: {ex.Message}");
             }
 
@@ -442,6 +459,7 @@ namespace ScannerApp
             }
             catch (Exception ex)
             {
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed to load TWAIN Scanners: {ex.Message}{Environment.NewLine}");
                 System.Diagnostics.Debug.WriteLine($"TWAIN scanner detection failed: {ex.Message}");
             }
 

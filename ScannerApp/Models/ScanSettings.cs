@@ -13,7 +13,7 @@ namespace ScannerApp.Models
         public bool UseDuplex { get; set; }
         public ColorMode ColorMode { get; set; } = ColorMode.Color;
         public int Resolution { get; set; } = 300;
-        public ImageFormat Format { get; set; } = ImageFormat.Jpeg;
+        public ImageFormat Format { get; set; } = ImageFormat.Png;
         public bool ShowUI { get; set; } = false;
     }
 }

@@ -9,6 +9,7 @@ namespace ScannerApp.Helpers
 {
     public class WiaManager
     {
+        private readonly string _saveDir = @"C:\Scans";
         public List<ScannerInfo> GetScanners()
         {
             var scanners = new List<ScannerInfo>();
@@ -97,6 +98,7 @@ namespace ScannerApp.Helpers
                             Success = false,
                             ErrorMessage = "Scanner not found"
                         });
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: Scanner not found {Environment.NewLine}");
                         return results;
                     }
 
@@ -108,18 +110,21 @@ namespace ScannerApp.Helpers
                             Success = false,
                             ErrorMessage = "No scan items available"
                         });
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: No Scan items available {Environment.NewLine}");
                         return results;
+
                     }
 
                     var item = device.Items[1];
 
                     // Set scan properties
-                    SetScanProperty(item, 6146, (int)settings.ColorMode); // WIA_IPA_DATATYPE
+                    //SetScanProperty(item, 6146, (int)settings.ColorMode); // WIA_IPA_DATATYPE
                     SetScanProperty(item, 6147, settings.Resolution); // WIA_IPS_XRES
                     SetScanProperty(item, 6148, settings.Resolution); // WIA_IPS_YRES
 
                     // Handle duplex if supported and requested
-                    if (settings.UseDuplex && scannerInfo.SupportsDuplex)
+                    //if (settings.UseDuplex && scannerInfo.SupportsDuplex)
+                    if (1 == 1)
                     {
                         SetScanProperty(item, 6028, 1); // Enable duplex
                     }
@@ -140,7 +145,8 @@ namespace ScannerApp.Helpers
                     });
 
                     // Handle back page for duplex
-                    if (settings.UseDuplex && scannerInfo.SupportsDuplex)
+                    //if (settings.UseDuplex && scannerInfo.SupportsDuplex)
+                    if (1 == 1)
                     {
                         try
                         {
@@ -156,6 +162,7 @@ namespace ScannerApp.Helpers
                         }
                         catch (Exception ex)
                         {
+                            File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: Dublex Error {Environment.NewLine}");
                             System.Diagnostics.Debug.WriteLine($"No back page or error: {ex.Message}");
                         }
                     }
@@ -167,6 +174,7 @@ namespace ScannerApp.Helpers
                         Success = false,
                         ErrorMessage = $"WIA scan failed: {ex.Message}"
                     });
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: WIA scan failed: {ex.Message} {Environment.NewLine}");
                 }
                 catch (Exception ex)
                 {
@@ -175,6 +183,8 @@ namespace ScannerApp.Helpers
                         Success = false,
                         ErrorMessage = $"Scan error: {ex.Message}"
                     });
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: Scan error: {ex.Message} {Environment.NewLine}");
+
                 }
 
                 return results;
@@ -196,6 +206,8 @@ namespace ScannerApp.Helpers
             }
             catch (Exception ex)
             {
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: Failed to set property {propertyId}: {ex.Message} {Environment.NewLine}");
+
                 System.Diagnostics.Debug.WriteLine($"Failed to set property {propertyId}: {ex.Message}");
             }
         }
