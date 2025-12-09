@@ -1,6 +1,10 @@
 ﻿using NTwain.Data;
 using NTwain;
 using ScannerApp.Models;
+using System.Windows.Forms;
+using System.Drawing.Imaging;
+using ColorMode = ScannerApp.Models.ColorMode;
+
 namespace ScannerApp.Helpers
 {
     public class TwainManager : IDisposable
@@ -15,8 +19,7 @@ namespace ScannerApp.Helpers
         {
             try
             {
-                _session = new TwainSession(TWIdentity.CreateFromAssembly(DataGroups.Image, System.Reflection.Assembly.GetExecutingAssembly()));
-                _session.Open();
+
             }
             catch (Exception ex)
             {
@@ -29,7 +32,9 @@ namespace ScannerApp.Helpers
         public List<ScannerInfo> GetScanners()
         {
             var scanners = new List<ScannerInfo>();
-
+            var appId = TWIdentity.CreateFromAssembly(DataGroups.Image, typeof(ScannerForm).Assembly);
+            _session = new TwainSession(appId);
+            _session.Open();
             try
             {
                 if (_session == null || _session.State < 3)
@@ -39,30 +44,181 @@ namespace ScannerApp.Helpers
 
                 foreach (var source in _session.GetSources())
                 {
-                    if (IsScannerConnected(source))
+                    try
                     {
+                        //if (IsScannerConnected(source))
+                        //{
                         var scanner = new ScannerInfo
                         {
                             Id = source.Name,
                             Name = source.Name,
                             Type = ScannerType.TWAIN,
-                            //SupportsDuplex = CheckDuplexSupport(source) == NTwain.Data.BoolType.True ? true : false
-                            SupportsDuplex = CheckDuplexSupport(source) == NTwain.Data.BoolType.True ? true : false
+                            SupportsDuplex = false // Default to false
                         };
-                        scanners.Add(scanner);
-                    }
 
+                        // Check duplex support only once
+                        try
+                        {
+                            source.Open();
+                            scanner.SupportsDuplex = CheckDuplexSupport(source) == NTwain.Data.BoolType.True;
+                            source.Close();
+                        }
+                        catch (Exception ex)
+                        {
+                            File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to check duplex support for {source.Name}: {ex.Message} {Environment.NewLine}");
+                            scanner.SupportsDuplex = false;
+
+                            // Ensure source is closed on error
+                            try
+                            {
+                                // Attempt to close the source if it is open.
+                                if (source.IsOpen)
+                                {
+                                    source.Close();
+                                }
+                            }
+                            catch (Exception closeEx)
+                            {
+                                // Exception ignored intentionally: closing a TWAIN source may fail if the source is already closed or in an invalid state.
+                                // See S2486: Exception is intentionally ignored as a best-effort cleanup.
+                            }
+                        }
+
+                        scanners.Add(scanner);
+                        //}
+                    }
+                    catch (Exception ex)
+                    {
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to process scanner {source.Name}: {ex.Message} {Environment.NewLine}");
+                        System.Diagnostics.Debug.WriteLine($"Failed to process scanner {source.Name}: {ex.Message}");
+                    }
+                }
+                if (_session is not null)
+                {
+                    _session.Close();
                 }
             }
             catch (Exception ex)
             {
                 File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to enumerate TWAIN scanners: {ex.Message} {Environment.NewLine}");
-
                 System.Diagnostics.Debug.WriteLine($"Failed to enumerate TWAIN scanners: {ex.Message}");
             }
 
             return scanners;
         }
+
+
+
+        public async Task<List<ScanResult>> ScanAsync(ScannerInfo scannerInfo, ScanSettings settings)
+        {
+            var results = new List<ScanResult>();
+            var tcs = new TaskCompletionSource<List<ScanResult>>();
+            var appId = TWIdentity.CreateFromAssembly(DataGroups.Image, typeof(ScannerForm).Assembly);
+            _session = new TwainSession(appId);
+
+            try
+            {
+                _session.Open();
+                if (_session.State < 3)
+                {
+                    results.Add(new ScanResult { Success = false, ErrorMessage = "TWAIN session failed to open." });
+                    return results;
+                }
+
+                var source = _session.GetSources().FirstOrDefault(s => s.Name == scannerInfo.Name);
+                if (source == null)
+                {
+                    results.Add(new ScanResult { Success = false, ErrorMessage = "Scanner source not found." });
+                    return results;
+                }
+
+                source.Open();
+                if (_session.State < 4)
+                {
+                    results.Add(new ScanResult { Success = false, ErrorMessage = "Scanner source failed to open." });
+                    return results;
+                }
+
+                ConfigureScanner(source, settings, scannerInfo);
+
+                int imageCount = 0;
+                string frontPath = string.Empty, backPath = string.Empty;
+                string sessionId = Guid.NewGuid().ToString();
+
+                _session.DataTransferred += (s, e) =>
+                {
+                    try
+                    {
+                        if (e.NativeData != null)
+                        {
+                            using var stream = e.GetNativeImageStream();
+                            if (stream != null)
+                            {
+                                imageCount++;
+                                var imgName = (imageCount == 1) ? "back" : "front";
+                                string filePath = Path.Combine(_saveDir, $"{sessionId}_{imgName}.jpg");
+
+                                using (var bmp = new System.Drawing.Bitmap(stream))
+                                {
+                                    bmp.Save(filePath, ImageFormat.Jpeg);
+                                }
+
+                                if (imageCount == 1) frontPath = filePath;
+                                if (imageCount == 2) backPath = filePath;
+
+                                results.Add(new ScanResult
+                                {
+                                    Success = true,
+                                    FilePath = filePath,
+                                    ScannedAt = DateTime.Now
+                                });
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to save image: {ex.Message}{Environment.NewLine}");
+                        results.Add(new ScanResult { Success = false, ErrorMessage = $"Failed to save image: {ex.Message}" });
+                    }
+                };
+
+                _session.SourceDisabled += (s, e) =>
+                {
+                    // You can add final logic here if needed, for example, combining images.
+                    // For now, we just complete the task.
+                    tcs.TrySetResult(results);
+                };
+
+                _session.TransferError += (s, e) =>
+                {
+                    results.Add(new ScanResult { Success = false, ErrorMessage = $"Transfer error: {e.Exception?.Message}" });
+                    tcs.TrySetResult(results);
+                };
+
+                var enableMode = settings.ShowUI ? SourceEnableMode.ShowUI : SourceEnableMode.NoUI;
+                if (source.Enable(enableMode, true, IntPtr.Zero) != ReturnCode.Success)
+                {
+                    results.Add(new ScanResult { Success = false, ErrorMessage = "Failed to enable scanner." });
+                    return results;
+                }
+
+                return await tcs.Task;
+            }
+            catch (Exception ex)
+            {
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: TWAIN scan failed: {ex.Message} {Environment.NewLine}");
+                results.Add(new ScanResult { Success = false, ErrorMessage = $"TWAIN scan failed: {ex.Message}" });
+                return results;
+            }
+            finally
+            {
+                if (_session != null && _session.State > 2)
+                {
+                    _session.Close();
+                }
+            }
+        }
+
 
         private bool IsScannerConnected(DataSource source)
         {
@@ -72,22 +228,39 @@ namespace ScannerApp.Helpers
                 var onlineCapability = source.Capabilities.CapDeviceOnline;
                 var onlineResult = onlineCapability.GetCurrent();
 
-                if (onlineResult == NTwain.Data.BoolType.True)
+                bool isConnected = onlineResult == NTwain.Data.BoolType.True;
+
+                if (isConnected)
                 {
                     System.Diagnostics.Debug.WriteLine($"Scanner {source.Name} is online");
-                    return true;
                 }
                 else
                 {
-                    return false;
+                    System.Diagnostics.Debug.WriteLine($"Scanner {source.Name} is offline");
                 }
 
+                source.Close();
+                return isConnected;
             }
             catch (Exception ex)
             {
-                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: Scanner connection test failed for {source.Name}: {ex.Message} {Environment.NewLine}");
-
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Scanner connection test failed for {source.Name}: {ex.Message} {Environment.NewLine}");
                 System.Diagnostics.Debug.WriteLine($"Scanner connection test failed for {source.Name}: {ex.Message}");
+
+                // Ensure source is closed on error
+                try
+                {
+                    // Attempt to close the source if it is open.
+                    if (source.IsOpen)
+                    {
+                        source.Close();
+                    }
+                }
+                catch (Exception closeEx)
+                {
+                    // Exception ignored intentionally: closing a TWAIN source may fail if the source is already closed or in an invalid state.
+                    // See S2486: Exception is intentionally ignored as a best-effort cleanup.
+                }
                 return false;
             }
         }
@@ -95,188 +268,31 @@ namespace ScannerApp.Helpers
 
         private NTwain.Data.BoolType CheckDuplexSupport(DataSource source)
         {
+            try
+            {
+                // Assume source is already opened by caller
+                var cap = source.Capabilities.CapDuplexEnabled;
+                if (cap == null || !cap.IsSupported)
+                {
+                    return NTwain.Data.BoolType.False;
+                }
 
-            source.Open();
-
-
-            var cap = source.Capabilities.CapDuplexEnabled;
-            var result = cap.GetCurrent();
-
-            return result;
-
+                // Check if duplex can be enabled
+                var supportedCaps = cap.GetValues();
+                return supportedCaps.Contains(NTwain.Data.BoolType.True) ? NTwain.Data.BoolType.True : NTwain.Data.BoolType.False;
+            }
+            catch (Exception ex)
+            {
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to check duplex support: {ex.Message} {Environment.NewLine}");
+                System.Diagnostics.Debug.WriteLine($"Failed to check duplex support: {ex.Message}");
+                return NTwain.Data.BoolType.False;
+            }
         }
 
-        public async Task<List<ScanResult>> ScanAsync(ScannerInfo scannerInfo, ScanSettings settings)
+        // Helper method to handle data transfer events
+        private void OnDataTransferred(object sender, DataTransferredEventArgs e)
         {
-            return await Task.Run(() =>
-            {
-                var results = new List<ScanResult>();
-
-                try
-                {
-                    if (_session == null || _session.State < 3)
-                    {
-                        results.Add(new ScanResult
-                        {
-                            Success = false,
-                            ErrorMessage = "TWAIN session not available"
-                        });
-                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: TWAIN session not available {Environment.NewLine}");
-
-                        return results;
-                    }
-
-
-                    var source = _session.GetSources().FirstOrDefault(s => s.Name == scannerInfo.Id);
-                    if (source == null)
-                    {
-                        results.Add(new ScanResult
-                        {
-                            Success = false,
-                            ErrorMessage = "Scanner source not found"
-                        });
-                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: Scanner source not found {Environment.NewLine}");
-
-                        return results;
-                    }
-
-                    lock (_lockObject)
-                    {
-                        source.Open();
-                        source.Capabilities.CapDuplexEnabled?.SetValue(NTwain.Data.BoolType.True);
-                        source.Capabilities.CapFeederEnabled?.SetValue(NTwain.Data.BoolType.True);
-                        source.Capabilities.CapAutoFeed?.SetValue(NTwain.Data.BoolType.True);
-                        source.Capabilities.ICapXResolution?.SetValue(150);
-                        source.Capabilities.ICapYResolution?.SetValue(150);
-
-                        if (source == null)
-                        {
-                            results.Add(new ScanResult
-                            {
-                                Success = false,
-                                ErrorMessage = "Failed to open scanner"
-                            });
-                            File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: Failed to open scanner {Environment.NewLine}");
-
-                            return results;
-                        }
-
-                        // LogCapabilities(source); // Log capabilities for debug
-                        LogSourceCapabilities(source); // Log capabilities for debug
-
-                        // Configure scanner settings
-                        //ConfigureScanner(source, settings, scannerInfo);
-                        source.Open();
-                        source.Capabilities.CapDuplexEnabled?.SetValue(NTwain.Data.BoolType.True);
-                        source.Capabilities.CapFeederEnabled?.SetValue(NTwain.Data.BoolType.True);
-                        source.Capabilities.CapAutoFeed?.SetValue(NTwain.Data.BoolType.True);
-                        source.Capabilities.ICapXResolution?.SetValue(150);
-                        source.Capabilities.ICapYResolution?.SetValue(150);
-
-
-                        //int _imageCount = 0;
-
-                        //// Image transfer handler
-                        //_session.DataTransferred += (s, args) =>
-                        //{
-                        //    if (args.NativeData != null)
-                        //    {
-                        //        using var stream = args.GetNativeImageStream();
-                        //        if (stream != null)
-                        //        {
-                        //            _imageCount++;
-                        //            var imgName = !settings.UseDuplex ? "passport" : (_imageCount == 2 ? "front" : "back");
-                        //            string path = Path.Combine(_saveDir, $"{Guid.NewGuid().ToString()}_{imgName}.jpg");
-                        //            using var bmp = new Bitmap(stream);
-                        //            bmp.Save(path);
-
-                        //            if (_imageCount == 1) frontPath = path;
-                        //            if (_imageCount == 2) backPath = path;
-                        //            if (type == 2) passportPath = path;
-
-                        //            if (_imageCount > 2)
-                        //            {
-                        //                source.Close();
-                        //                _session.Close();
-                        //            }
-                        //        }
-                        //    }
-                        //};
-
-                        // Start scanning
-                        source.Enable(SourceEnableMode.NoUI, false, IntPtr.Zero);
-
-                        // Wait until scanning completes
-                        while (_session.State == 5) Thread.Sleep(10000);
-                        // Start scanning
-                        source.Enable(SourceEnableMode.NoUI, false, IntPtr.Zero);
-                        // Enable source and start scanning
-                        //var rc = source.Enable(SourceEnableMode.NoUI, false, IntPtr.Zero);
-                        //if (rc != ReturnCode.Success)
-                        //{
-                        //    results.Add(new ScanResult
-                        //    {
-                        //        Success = false,
-                        //        ErrorMessage = $"Failed to enable scanner: {rc}"
-                        //    });
-                        //    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: Failed to enable scanner: {rc} {Environment.NewLine}");
-
-                        //    return results;
-                        //}
-
-                        // Wait for and process images
-                        _session.DataTransferred += (sender, e) =>
-                            {
-                                try
-                                {
-                                    var fileName = FileHelper.GenerateFileName(settings.SavePath, settings.Format);
-
-                                    using (var image = e.GetNativeImageStream())
-                                    using (var bitmap = new Bitmap(image))
-                                    {
-                                        Directory.CreateDirectory(Path.GetDirectoryName(fileName)!);
-                                        bitmap.Save(fileName, settings.Format);
-
-                                        results.Add(new ScanResult
-                                        {
-                                            Success = true,
-                                            FilePath = fileName
-                                        });
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    results.Add(new ScanResult
-                                    {
-                                        Success = false,
-                                        ErrorMessage = $"Failed to save image: {ex.Message}"
-                                    });
-                                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: Failed to save image: {ex.Message} {Environment.NewLine}");
-
-                                }
-                            };
-
-                        // Process messages until scanning is complete
-                        NTwain.Data.Message msg = new NTwain.Data.Message();
-
-                        while (_session.State == 5) Thread.Sleep(10000);
-                        source.Close();
-                        _session.Close();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    results.Add(new ScanResult
-                    {
-                        Success = false,
-                        ErrorMessage = $"TWAIN scan failed: {ex.Message}"
-                    });
-                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: TWAIN scan failed: {ex.Message} {Environment.NewLine}");
-
-                }
-
-                return results;
-            });
+            // This is just a placeholder - the actual handler is defined inline above
         }
 
         private void LogSourceCapabilities(DataSource source)
@@ -302,36 +318,90 @@ namespace ScannerApp.Helpers
         {
             try
             {
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Configuring scanner {ds.Name} {Environment.NewLine}");
+
                 // Set pixel type (color mode)
-                var pixelType = settings.ColorMode switch
+                try
                 {
-                    ColorMode.BlackAndWhite => PixelType.BlackWhite,
-                    ColorMode.Grayscale => PixelType.Gray,
-                    ColorMode.Color => PixelType.RGB,
-                    _ => PixelType.RGB
-                };
-                ds.Capabilities.ICapPixelType.SetValue(pixelType);
+                    var pixelType = settings.ColorMode switch
+                    {
+                        ColorMode.BlackAndWhite => PixelType.BlackWhite,
+                        ColorMode.Grayscale => PixelType.Gray,
+                        ColorMode.Color => PixelType.RGB,
+                        _ => PixelType.RGB
+                    };
+                    var pixelResult = ds.Capabilities.ICapPixelType?.SetValue(pixelType);
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  PixelType set to {pixelType}: {pixelResult} {Environment.NewLine}");
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set pixel type: {ex.Message} {Environment.NewLine}");
+                }
 
                 // Set resolution
-                ds.Capabilities.ICapXResolution.SetValue((float)settings.Resolution);
-                ds.Capabilities.ICapYResolution.SetValue((float)settings.Resolution);
+                try
+                {
+                    var xResResult = ds.Capabilities.ICapXResolution?.SetValue((float)settings.Resolution);
+                    var yResResult = ds.Capabilities.ICapYResolution?.SetValue((float)settings.Resolution);
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Resolution set to {settings.Resolution}: X={xResResult}, Y={yResResult} {Environment.NewLine}");
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set resolution: {ex.Message} {Environment.NewLine}");
+                }
 
                 // Set duplex if supported and requested
-                if (settings.UseDuplex && (scannerInfo.SupportsDuplex))
+                try
                 {
-                    ds.Capabilities.CapDuplexEnabled.SetValue(NTwain.Data.BoolType.True);
+                    if (scannerInfo.SupportsDuplex)
+                    {
+                        var duplexResult = ds.Capabilities.CapDuplexEnabled?.SetValue(NTwain.Data.BoolType.True);
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Duplex enabled: {duplexResult} {Environment.NewLine}");
+                    }
+                    else
+                    {
+                        var duplexResult = ds.Capabilities.CapDuplexEnabled?.SetValue(NTwain.Data.BoolType.False);
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Duplex disabled: {duplexResult} {Environment.NewLine}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set duplex: {ex.Message} {Environment.NewLine}");
+                }
+
+                // Set feeder capabilities
+                try
+                {
+                    var feederResult = ds.Capabilities.CapFeederEnabled?.SetValue(NTwain.Data.BoolType.True);
+                    var autoFeedResult = ds.Capabilities.CapAutoFeed?.SetValue(NTwain.Data.BoolType.True);
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Feeder settings: Feeder={feederResult}, AutoFeed={autoFeedResult} {Environment.NewLine}");
+
+                    // Set transfer count to -1 to scan all available pages
+                    var xferCountResult = ds.Capabilities.CapXferCount?.SetValue(-1);
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Transfer count set to -1: {xferCountResult} {Environment.NewLine}");
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set feeder capabilities: {ex.Message} {Environment.NewLine}");
                 }
 
                 // Disable UI if not requested
-                if (!settings.ShowUI)
+                try
                 {
-                    ds.Capabilities.CapIndicators.SetValue(NTwain.Data.BoolType.False);
+                    if (!settings.ShowUI)
+                    {
+                        var indicatorResult = ds.Capabilities.CapIndicators?.SetValue(NTwain.Data.BoolType.False);
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Indicators disabled: {indicatorResult} {Environment.NewLine}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set UI indicators: {ex.Message} {Environment.NewLine}");
                 }
             }
             catch (Exception ex)
             {
-                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed: Failed to configure scanner: {ex.Message} {Environment.NewLine}");
-
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to configure scanner: {ex.Message} {Environment.NewLine}");
                 System.Diagnostics.Debug.WriteLine($"Failed to configure scanner: {ex.Message}");
             }
         }

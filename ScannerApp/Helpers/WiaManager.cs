@@ -58,16 +58,23 @@ namespace ScannerApp.Helpers
             try
             {
                 var device = deviceInfo.Connect();
-                if (device.Items.Count == 0) return false;
-
-                var item = device.Items[1];
-
-                // Check if duplex property exists (WIA_DPS_DOCUMENT_HANDLING_SELECT = 6028)
-                foreach (Property prop in item.Properties)
+                
+                // Common duplex-related property IDs
+                int[] duplexPropertyIds = { 
+                    6028, // WIA_DPS_DOCUMENT_HANDLING_SELECT
+                    6027, // WIA_DPS_DOCUMENT_HANDLING_CAPABILITIES
+                    3078  // WIA_IPA_DOCUMENT_HANDLING_SELECT
+                };
+                
+                foreach (Item item in device.Items)
                 {
-                    if (prop.PropertyID == 6028)
+                    foreach (Property prop in item.Properties)
                     {
-                        return true;
+                        if (duplexPropertyIds.Contains(prop.PropertyID))
+                        {
+                            System.Diagnostics.Debug.WriteLine($"Found duplex-related property: {prop.PropertyID}");
+                            return true;
+                        }
                     }
                 }
             }

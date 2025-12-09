@@ -49,6 +49,10 @@ namespace ScannerApp
             try
             {
                 var scanner = LoadScanners();
+                //if (type == 1)
+                //{
+                //    scanner.SupportsDuplex = true;
+                //}
 
                 if (!Directory.Exists(_saveDir))
                 {
@@ -263,7 +267,12 @@ namespace ScannerApp
                 File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: failed:scanners.Count = 0 {Environment.NewLine}");
 
             }
-            return scanners.FirstOrDefault();
+            //return scanners.FirstOrDefault(c => c.Name == "EPSON DS-530");
+            return scanners
+                    .Where(c => !c.Name.Contains("Vue"))
+                    .OrderBy(c => c.Type == ScannerType.TWAIN ? 0 : 1)
+                    .FirstOrDefault();
+
             //cmbScanners.DataSource = scanners;
             //cmbScanners.DisplayMember = "Name";
             //cmbScanners.ValueMember = "Id";
