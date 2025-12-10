@@ -22,14 +22,32 @@ namespace ScannerApp.Helpers
                 {
                     if (deviceInfo.Type == WiaDeviceType.ScannerDeviceType)
                     {
-                        var scanner = new ScannerInfo
+                        try
                         {
-                            Id = deviceInfo.DeviceID,
-                            Name = GetDeviceName(deviceInfo),
-                            Type = ScannerType.WIA,
-                            SupportsDuplex = CheckDuplexSupport(deviceInfo)
-                        };
-                        scanners.Add(scanner);
+                            // Attempt to connect to the device to verify it's online.
+                            var device = deviceInfo.Connect();
+
+                            var scanner = new ScannerInfo
+                            {
+                                Id = deviceInfo.DeviceID,
+                                Name = GetDeviceName(deviceInfo),
+                                Type = ScannerType.WIA,
+                                SupportsDuplex = CheckDuplexSupport(deviceInfo)
+                            };
+                            scanners.Add(scanner);
+
+                            // Release the COM object as it's no longer needed here.
+                            if (device != null)
+                            {
+                                Marshal.ReleaseComObject(device);
+                            }
+                        }
+                        catch (COMException ex)
+                        {
+                            // A COMException is thrown if the device is not connected.
+                            // We can log this for debugging but otherwise ignore it.
+                            System.Diagnostics.Debug.WriteLine($"Scanner '{GetDeviceName(deviceInfo)}' is offline or inaccessible: {ex.Message}");
+                        }
                     }
                 }
             }

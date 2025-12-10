@@ -46,46 +46,46 @@ namespace ScannerApp.Helpers
                 {
                     try
                     {
-                        //if (IsScannerConnected(source))
-                        //{
-                        var scanner = new ScannerInfo
+                        if (IsScannerConnected(source))
                         {
-                            Id = source.Name,
-                            Name = source.Name,
-                            Type = ScannerType.TWAIN,
-                            SupportsDuplex = false // Default to false
-                        };
+                            var scanner = new ScannerInfo
+                            {
+                                Id = source.Name,
+                                Name = source.Name,
+                                Type = ScannerType.TWAIN,
+                                SupportsDuplex = false // Default to false
+                            };
 
-                        // Check duplex support only once
-                        try
-                        {
-                            source.Open();
-                            scanner.SupportsDuplex = CheckDuplexSupport(source) == NTwain.Data.BoolType.True;
-                            source.Close();
-                        }
-                        catch (Exception ex)
-                        {
-                            File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to check duplex support for {source.Name}: {ex.Message} {Environment.NewLine}");
-                            scanner.SupportsDuplex = false;
-
-                            // Ensure source is closed on error
+                            // Check duplex support only once
                             try
                             {
-                                // Attempt to close the source if it is open.
-                                if (source.IsOpen)
+                                source.Open();
+                                scanner.SupportsDuplex = CheckDuplexSupport(source) == NTwain.Data.BoolType.True;
+                                source.Close();
+                            }
+                            catch (Exception ex)
+                            {
+                                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to check duplex support for {source.Name}: {ex.Message} {Environment.NewLine}");
+                                scanner.SupportsDuplex = false;
+
+                                // Ensure source is closed on error
+                                try
                                 {
-                                    source.Close();
+                                    // Attempt to close the source if it is open.
+                                    if (source.IsOpen)
+                                    {
+                                        source.Close();
+                                    }
+                                }
+                                catch (Exception closeEx)
+                                {
+                                    // Exception ignored intentionally: closing a TWAIN source may fail if the source is already closed or in an invalid state.
+                                    // See S2486: Exception is intentionally ignored as a best-effort cleanup.
                                 }
                             }
-                            catch (Exception closeEx)
-                            {
-                                // Exception ignored intentionally: closing a TWAIN source may fail if the source is already closed or in an invalid state.
-                                // See S2486: Exception is intentionally ignored as a best-effort cleanup.
-                            }
-                        }
 
-                        scanners.Add(scanner);
-                        //}
+                            scanners.Add(scanner);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -160,7 +160,10 @@ namespace ScannerApp.Helpers
 
                                 using (var bmp = new System.Drawing.Bitmap(stream))
                                 {
-                                    bmp.Save(filePath, ImageFormat.Jpeg);
+                                    var jpegEncoder = GetEncoder(ImageFormat.Jpeg);
+                                    var encoderParameters = new EncoderParameters(1);
+                                    encoderParameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 95L); // 95% quality
+                                    bmp.Save(filePath, jpegEncoder, encoderParameters);
                                 }
 
                                 if (imageCount == 1) frontPath = filePath;
@@ -222,13 +225,14 @@ namespace ScannerApp.Helpers
 
         private bool IsScannerConnected(DataSource source)
         {
+            bool isConnected = false;
             try
             {
                 source.Open();
                 var onlineCapability = source.Capabilities.CapDeviceOnline;
                 var onlineResult = onlineCapability.GetCurrent();
 
-                bool isConnected = onlineResult == NTwain.Data.BoolType.True;
+                isConnected = onlineResult == NTwain.Data.BoolType.True;
 
                 if (isConnected)
                 {
@@ -238,31 +242,22 @@ namespace ScannerApp.Helpers
                 {
                     System.Diagnostics.Debug.WriteLine($"Scanner {source.Name} is offline");
                 }
-
-                source.Close();
-                return isConnected;
             }
             catch (Exception ex)
             {
                 File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Scanner connection test failed for {source.Name}: {ex.Message} {Environment.NewLine}");
                 System.Diagnostics.Debug.WriteLine($"Scanner connection test failed for {source.Name}: {ex.Message}");
-
-                // Ensure source is closed on error
-                try
-                {
-                    // Attempt to close the source if it is open.
-                    if (source.IsOpen)
-                    {
-                        source.Close();
-                    }
-                }
-                catch (Exception closeEx)
-                {
-                    // Exception ignored intentionally: closing a TWAIN source may fail if the source is already closed or in an invalid state.
-                    // See S2486: Exception is intentionally ignored as a best-effort cleanup.
-                }
-                return false;
+                isConnected = false;
             }
+            finally
+            {
+                // Ensure source is closed after the check.
+                if (source.IsOpen)
+                {
+                    source.Close();
+                }
+            }
+            return isConnected;
         }
 
 
@@ -295,23 +290,18 @@ namespace ScannerApp.Helpers
             // This is just a placeholder - the actual handler is defined inline above
         }
 
-        private void LogSourceCapabilities(DataSource source)
+
+        private ImageCodecInfo GetEncoder(ImageFormat format)
         {
-            try
+            ImageCodecInfo[] codecs = ImageCodecInfo.GetImageDecoders();
+            foreach (ImageCodecInfo codec in codecs)
             {
-                var logPath = Path.Combine(_saveDir, "scanner.log");
-                File.AppendAllText(logPath, $"{DateTime.Now}: Source Capabilities Debug for {source.Name}{Environment.NewLine}");
-
-
-                // Log key capabilities
-                try { File.AppendAllText(logPath, $"  Device Online: {source.Capabilities.CapDeviceOnline.GetCurrent()}{Environment.NewLine}"); } catch { }
-                try { File.AppendAllText(logPath, $"  UI Controllable: {source.Capabilities.CapUIControllable.GetCurrent()}{Environment.NewLine}"); } catch { }
-                try { File.AppendAllText(logPath, $"  Feeder Enabled: {source.Capabilities.CapFeederEnabled.GetCurrent()}{Environment.NewLine}"); } catch { }
+                if (codec.FormatID == format.Guid)
+                {
+                    return codec;
+                }
             }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Failed to log capabilities: {ex.Message}");
-            }
+            return null;
         }
 
         private void ConfigureScanner(DataSource ds, ScanSettings settings, ScannerInfo scannerInfo)
@@ -319,6 +309,17 @@ namespace ScannerApp.Helpers
             try
             {
                 File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Configuring scanner {ds.Name} {Environment.NewLine}");
+
+                // Set compression to none for highest quality transfer
+                try
+                {
+                    var compressionResult = ds.Capabilities.ICapCompression?.SetValue(CompressionType.None);
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Compression set to None: {compressionResult} {Environment.NewLine}");
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set compression: {ex.Message} {Environment.NewLine}");
+                }
 
                 // Set pixel type (color mode)
                 try
@@ -332,10 +333,21 @@ namespace ScannerApp.Helpers
                     };
                     var pixelResult = ds.Capabilities.ICapPixelType?.SetValue(pixelType);
                     File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  PixelType set to {pixelType}: {pixelResult} {Environment.NewLine}");
+
+                    // Set bit depth for better quality
+                    ushort bitDepth = pixelType switch
+                    {
+                        PixelType.RGB => 24,
+                        PixelType.Gray => 8,
+                        PixelType.BlackWhite => 1,
+                        _ => 24
+                    };
+                    var bitDepthResult = ds.Capabilities.ICapBitDepth?.SetValue(bitDepth);
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Bit depth set to {bitDepth}: {bitDepthResult} {Environment.NewLine}");
                 }
                 catch (Exception ex)
                 {
-                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set pixel type: {ex.Message} {Environment.NewLine}");
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set pixel type or bit depth: {ex.Message} {Environment.NewLine}");
                 }
 
                 // Set resolution
@@ -401,11 +413,10 @@ namespace ScannerApp.Helpers
             }
             catch (Exception ex)
             {
-                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to configure scanner: {ex.Message} {Environment.NewLine}");
+                File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to configure scanner: {ds.Name} {Environment.NewLine}");
                 System.Diagnostics.Debug.WriteLine($"Failed to configure scanner: {ex.Message}");
             }
         }
-
         public void Dispose()
         {
             Dispose(true);

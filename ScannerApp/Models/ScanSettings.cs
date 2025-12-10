@@ -12,7 +12,7 @@ namespace ScannerApp.Models
         public string SavePath { get; set; } = @"C:\ScannedImages\";
         public bool UseDuplex { get; set; }
         public ColorMode ColorMode { get; set; } = ColorMode.Color;
-        public int Resolution { get; set; } = 300;
+        public int Resolution { get; set; } = 800;
         public ImageFormat Format { get; set; } = ImageFormat.Png;
         public bool ShowUI { get; set; } = false;
     }

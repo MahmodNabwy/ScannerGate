@@ -31,10 +31,10 @@ namespace ScannerApp
         private readonly string _saveDir = @"C:\Scans";
 
         //http://192.168.1.15:5000/ssn/extract
-        private readonly string _ocrIDEndpoint = "http://192.168.15.108:5000/ssn/extract";
-        private readonly string _ocrPassportEndpoint = "http://192.168.15.108:5000/passport/extract";
-        private readonly string _ocrDrivingLicenseEndpoint = "http://192.168.15.108:5000/license/extract";
-        private readonly string _backendApi = "http://192.168.15.108:444/api/admin/TempPerson";
+        private readonly string _ocrIDEndpoint = "http://192.168.100.149:5000/ssn/extract";
+        private readonly string _ocrPassportEndpoint = "http://192.168.100.149:5000/passport/extract";
+        private readonly string _ocrDrivingLicenseEndpoint = "http://192.168.100.149:5000/license/extract";
+        private readonly string _backendApi = "http://192.168.100.149:444/api/admin/TempPerson";
         private int _imageCount = 0;
         public ScannerForm()
         {
@@ -48,7 +48,7 @@ namespace ScannerApp
         {
             try
             {
-                var scanner = LoadScanners();
+                var scanner = LoadScanners(type);
                 //if (type == 1)
                 //{
                 //    scanner.SupportsDuplex = true;
@@ -84,6 +84,11 @@ namespace ScannerApp
                     var successfulResults = results.Where(r => r.Success && !string.IsNullOrEmpty(r.FilePath)).ToList();
                     drivingLicensePath = successfulResults[0].FilePath;
 
+                }
+                if (type == 1 && results.Count() == 2)
+                {
+                    frontPath = results[1].FilePath;
+                    backPath = results[0].FilePath;
                 }
 
 
@@ -259,7 +264,7 @@ namespace ScannerApp
 
             //this.Controls.AddRange(new Control[] { lblScanner, cmbScanners, chkDuplex, lblPath, txtSavePath, btnBrowse, btnScan, lblResults, lstResults });
         }
-        private ScannerInfo? LoadScanners()
+        private ScannerInfo? LoadScanners(int type)
         {
             var scanners = scannerManager.GetAvailableScanners();
             if (scanners.Count > 0)
