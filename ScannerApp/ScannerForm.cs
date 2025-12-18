@@ -34,7 +34,7 @@ namespace ScannerApp
         private readonly string _ocrIDEndpoint = "http://192.168.100.149:5000/ssn/extract";
         private readonly string _ocrPassportEndpoint = "http://192.168.100.149:5000/passport/extract";
         private readonly string _ocrDrivingLicenseEndpoint = "http://192.168.100.149:5000/license/extract";
-        private readonly string _backendApi = "http://192.168.100.149:444/api/admin/TempPerson";
+        private readonly string _backendApi = "http://192.168.100.149:699/api/admin/TempPerson";
         private int _imageCount = 0;
         public ScannerForm()
         {
@@ -74,7 +74,7 @@ namespace ScannerApp
                     SavePath = _saveDir,
                     UseDuplex = useDuplex,
                     ColorMode = ScannerApp.Models.ColorMode.Color,
-                    Resolution = 100, //Increasing Resolution will increase Image Size 
+                    Resolution = 600, //Increasing Resolution will increase Image Size 
                     Format = ImageFormat.Jpeg
                 };
 
@@ -166,7 +166,7 @@ namespace ScannerApp
                     _ => await PostWithRetryAsync<OcrResponse>(() => client.PostAsync(endpoint, PassPortParams), 3),
                 };
 
-                if (ocrResult == null || ocrResult.Status != "success")
+               if (ocrResult == null || ocrResult.Status != "success")
                 {
                     return new
                     {

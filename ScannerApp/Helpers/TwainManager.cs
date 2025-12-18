@@ -139,7 +139,7 @@ namespace ScannerApp.Helpers
                     return results;
                 }
 
-                ConfigureScanner(source, settings, scannerInfo);
+                bool borderDetectionEnabled = ConfigureScanner(source, settings, scannerInfo);
 
                 int imageCount = 0;
                 string frontPath = string.Empty, backPath = string.Empty;
@@ -160,10 +160,23 @@ namespace ScannerApp.Helpers
 
                                 using (var bmp = new System.Drawing.Bitmap(stream))
                                 {
+                                    Bitmap imageToSave = bmp;
+                                    // If automatic border detection is not supported/enabled, crop manually.
+                                    //if (borderDetectionEnabled)
+                                    //{
+                                    //    imageToSave = CropImage(bmp);
+                                    //}
+
                                     var jpegEncoder = GetEncoder(ImageFormat.Jpeg);
                                     var encoderParameters = new EncoderParameters(1);
-                                    encoderParameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 95L); // 95% quality
-                                    bmp.Save(filePath, jpegEncoder, encoderParameters);
+                                    encoderParameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 100L); // 95% quality
+                                    imageToSave.Save(filePath, jpegEncoder, encoderParameters);
+
+                                    // If a new bitmap was created for cropping, dispose of it.
+                                    if (!ReferenceEquals(bmp, imageToSave))
+                                    {
+                                        imageToSave.Dispose();
+                                    }
                                 }
 
                                 if (imageCount == 1) frontPath = filePath;
@@ -304,11 +317,32 @@ namespace ScannerApp.Helpers
             return null;
         }
 
-        private void ConfigureScanner(DataSource ds, ScanSettings settings, ScannerInfo scannerInfo)
+        private bool ConfigureScanner(DataSource ds, ScanSettings settings, ScannerInfo scannerInfo)
         {
+            bool borderDetectionSet = false;
             try
             {
                 File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Configuring scanner {ds.Name} {Environment.NewLine}");
+
+                // Try to enable automatic border detection
+                try
+                {
+                    var borderCap = ds.Capabilities.ICapAutomaticBorderDetection;
+                    if (borderCap != null && borderCap.IsSupported)
+                    {
+                        var result = borderCap.SetValue(NTwain.Data.BoolType.True);
+                        if (result == ReturnCode.Success)
+                        {
+                            borderDetectionSet = true;
+                        }
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Automatic Border Detection enabled: {result} {Environment.NewLine}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set automatic border detection: {ex.Message} {Environment.NewLine}");
+                }
+
 
                 // Set compression to none for highest quality transfer
                 try
@@ -416,7 +450,91 @@ namespace ScannerApp.Helpers
                 File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to configure scanner: {ds.Name} {Environment.NewLine}");
                 System.Diagnostics.Debug.WriteLine($"Failed to configure scanner: {ex.Message}");
             }
+            return borderDetectionSet;
         }
+
+        private Bitmap CropImage(Bitmap source, int tolerance = 50)
+        {
+            // Find the bounding box of the content
+            int top = -1, bottom = -1, left = -1, right = -1;
+
+            // Find top
+            for (int y = 0; y < source.Height; y++)
+            {
+                for (int x = 0; x < source.Width; x++)
+                {
+                    Color pixel = source.GetPixel(x, y);
+                    if (pixel.R < 255 - tolerance || pixel.G < 255 - tolerance || pixel.B < 255 - tolerance)
+                    {
+                        top = y;
+                        goto FindBottom;
+                    }
+                }
+            }
+        FindBottom:
+            if (top == -1) return source; // Image is completely white
+
+            // Find bottom
+            for (int y = source.Height - 1; y >= 0; y--)
+            {
+                for (int x = 0; x < source.Width; x++)
+                {
+                    Color pixel = source.GetPixel(x, y);
+                    if (pixel.R < 255 - tolerance || pixel.G < 255 - tolerance || pixel.B < 255 - tolerance)
+                    {
+                        bottom = y;
+                        goto FindLeft;
+                    }
+                }
+            }
+        FindLeft:
+            // Find left
+            for (int x = 0; x < source.Width; x++)
+            {
+                for (int y = top; y <= bottom; y++)
+                {
+                    Color pixel = source.GetPixel(x, y);
+                    if (pixel.R < 255 - tolerance || pixel.G < 255 - tolerance || pixel.B < 255 - tolerance)
+                    {
+                        left = x;
+                        goto FindRight;
+                    }
+                }
+            }
+        FindRight:
+            // Find right
+            for (int x = source.Width - 1; x >= 0; x--)
+            {
+                for (int y = top; y <= bottom; y++)
+                {
+                    Color pixel = source.GetPixel(x, y);
+                    if (pixel.R < 255 - tolerance || pixel.G < 255 - tolerance || pixel.B < 255 - tolerance)
+                    {
+                        right = x;
+                        goto Crop;
+                    }
+                }
+            }
+
+        Crop:
+            int width = right - left + 1;
+            int height = bottom - top + 1;
+
+            if (width <= 0 || height <= 0) return source; // No content found
+
+            var cropRect = new Rectangle(left, top, width, height);
+            Bitmap croppedImage = new Bitmap(cropRect.Width, cropRect.Height);
+
+            using (Graphics g = Graphics.FromImage(croppedImage))
+            {
+                g.DrawImage(source, new Rectangle(0, 0, croppedImage.Width, croppedImage.Height),
+                                 cropRect,
+                                 GraphicsUnit.Pixel);
+            }
+
+            return croppedImage;
+        }
+
         public void Dispose()
         {
             Dispose(true);
