@@ -4,6 +4,7 @@ using ScannerApp.Models;
 using System.Windows.Forms;
 using System.Drawing.Imaging;
 using ColorMode = ScannerApp.Models.ColorMode;
+using System.Drawing;
 
 namespace ScannerApp.Helpers
 {
@@ -115,6 +116,7 @@ namespace ScannerApp.Helpers
             var tcs = new TaskCompletionSource<List<ScanResult>>();
             var appId = TWIdentity.CreateFromAssembly(DataGroups.Image, typeof(ScannerForm).Assembly);
             _session = new TwainSession(appId);
+            DataSource source = null;
 
             try
             {
@@ -125,7 +127,7 @@ namespace ScannerApp.Helpers
                     return results;
                 }
 
-                var source = _session.GetSources().FirstOrDefault(s => s.Name == scannerInfo.Name);
+                source = _session.GetSources().FirstOrDefault(s => s.Name == scannerInfo.Name);
                 if (source == null)
                 {
                     results.Add(new ScanResult { Success = false, ErrorMessage = "Scanner source not found." });
@@ -169,7 +171,7 @@ namespace ScannerApp.Helpers
 
                                     var jpegEncoder = GetEncoder(ImageFormat.Jpeg);
                                     var encoderParameters = new EncoderParameters(1);
-                                    encoderParameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 100L); // 95% quality
+                                    encoderParameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 100L); // 100% quality
                                     imageToSave.Save(filePath, jpegEncoder, encoderParameters);
 
                                     // If a new bitmap was created for cropping, dispose of it.
@@ -228,6 +230,19 @@ namespace ScannerApp.Helpers
             }
             finally
             {
+                // Close the source if it's open to allow re-enumeration.
+                if (source != null && source.IsOpen)
+                {
+                    try
+                    {
+                        source.Close();
+                    }
+                    catch (Exception ex)
+                    {
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"{DateTime.Now}: Failed to close source: {ex.Message}{Environment.NewLine}");
+                    }
+                }
+
                 if (_session != null && _session.State > 2)
                 {
                     _session.Close();
@@ -343,7 +358,20 @@ namespace ScannerApp.Helpers
                     File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set automatic border detection: {ex.Message} {Environment.NewLine}");
                 }
 
-
+                // Set a standard paper size to reduce variability (e.g., A4)
+                try
+                {
+                    var sizeCap = ds.Capabilities.ICapSupportedSizes;
+                    if (sizeCap != null && sizeCap.IsSupported)
+                    {
+                        var result = sizeCap.SetValue(SupportedSize.A4); // Or SupportedSize.USLetter, etc.
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Paper size set to A4: {result} {Environment.NewLine}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Failed to set paper size: {ex.Message} {Environment.NewLine}");
+                }
                 // Set compression to none for highest quality transfer
                 try
                 {
@@ -437,8 +465,7 @@ namespace ScannerApp.Helpers
                     if (!settings.ShowUI)
                     {
                         var indicatorResult = ds.Capabilities.CapIndicators?.SetValue(NTwain.Data.BoolType.False);
-                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Indicators disabled: {indicatorResult} {Environment.NewLine}");
-                    }
+                        File.AppendAllText(Path.Combine(_saveDir, "scanner.log"), $"  Indicators disabled: {indicatorResult} {Environment.NewLine}");                    }
                 }
                 catch (Exception ex)
                 {

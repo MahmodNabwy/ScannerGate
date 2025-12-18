@@ -192,8 +192,8 @@ namespace ScannerApp
                     governorate = ocrResult.Data.Governorate,
                     expiryDate = ocrResult.Data.ExpiryDate,
                     serial = ocrResult.Data.Serial,
-                    frontPath = ocrResult.FrontPath,
-                    backPath = ocrResult.BackPath,
+                    FrontImgUrl = ocrResult.FrontPath,
+                    BackImgUrl = ocrResult.BackPath,
                     passportPath = ocrResult.PassportPath,
                     trafficUnit = ocrResult.Data.unit,
                     raw = JsonConvert.SerializeObject(ocrResult.Data)
